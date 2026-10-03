@@ -1,5 +1,7 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { styles } from '@/constants/styles';
 
 type PeriodRecord = {
   id: number;
@@ -33,62 +35,71 @@ const periodHistory: PeriodRecord[] = [
   },
 ];
 
+function renderPeriodCard(period: PeriodRecord) {
+  return (
+    <View style={styles.periodCard}>
+      <View style={styles.periodCardHeader}>
+        <Text style={styles.monthTitle}>{period.month}</Text>
+        <View style={styles.durationBadge}>
+          <Text style={styles.durationText}>{period.duration} days</Text>
+        </View>
+      </View>
+
+      <Text style={styles.periodDates}>
+        {period.startDate} - {period.endDate}
+      </Text>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
           <Text style={styles.appName}>WlueyOy</Text>
-          <Text>your cycle, simply tracked</Text>
+          <Text style={styles.subtitle}>your cycle, simply tracked</Text>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Current Cycle</Text>
-          <Text>UI will be completed later</Text>
+        <View style={styles.currentCycleCard}>
+          <Text
+            style={{
+              color: '#F8DCE7',
+              fontSize: 12,
+              fontWeight: '800',
+              letterSpacing: 1.5,
+            }}>
+            CURRENT CYCLE
+          </Text>
+
+          <View style={styles.cycleDayGroup}>
+            <Text style={styles.cycleDay}>Day 14</Text>
+            <Text style={styles.cycleDescription}>of your current cycle</Text>
+          </View>
+
+          <View style={styles.cycleEstimate}>
+            <Text style={styles.estimateLabel}>Estimated next period</Text>
+            <Text style={styles.estimateValue}>~14 days</Text>
+          </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Period History</Text>
 
           {periodHistory.map((period) => (
-            <View key={period.id} style={styles.periodRecord}>
-              <Text style={styles.periodMonth}>{period.month}</Text>
-              <Text>
-                {period.startDate} - {period.endDate}
-              </Text>
-              <Text>Duration: {period.duration} days</Text>
-            </View>
+            <View key={period.id}>{renderPeriodCard(period)}</View>
           ))}
         </View>
+
+        <Pressable
+          accessibilityLabel="Add period"
+          accessibilityRole="button"
+          style={styles.addButton}>
+          <Text style={styles.addButtonText}>+ Add Period</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  container: {
-    padding: 24,
-  },
-  appName: {
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  section: {
-    marginTop: 32,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  periodRecord: {
-    marginBottom: 20,
-  },
-  periodMonth: {
-    fontWeight: '600',
-  },
-});
