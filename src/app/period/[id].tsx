@@ -1,101 +1,42 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { Pressable, ScrollView, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
-import { styles } from '@/constants/styles';
-import { FlowLevel, usePeriods } from '@/context/PeriodContext';
-import { formatDate, fromDateKey } from '@/utils/date';
-
-const flowLabels: Record<FlowLevel, string> = {
-  none: 'No menstruation',
-  spotting: 'Spotting',
-  light: 'Light flow',
-  medium: 'Medium flow',
-  heavy: 'Heavy flow',
-};
-
-function NotFound() {
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.emptyState}>
-        <Text style={styles.formTitle}>Record not found</Text>
-        <Text style={styles.formDescription}>This record may have been removed.</Text>
-        <Pressable onPress={() => router.replace('/')} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>Back to home</Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
-  );
-}
+import { Alert, Pressable, Text, View } from 'react-native';
+import { AppFrame, AppHeader, LoadingScreen } from '@/components/AppFrame';
+import { palette, styles } from '@/constants/styles';
+import { usePeriods } from '@/context/PeriodContext';
+import { calculateDuration, formatDate, fromDateKey } from '@/utils/date';
 
 export default function PeriodDetailScreen() {
   const { id, saved, type } = useLocalSearchParams<{ id: string; saved?: string; type?: string }>();
-  const { findPeriod, findDailyLog } = usePeriods();
-
-  if (type === 'daily') {
-    const dailyLog = findDailyLog(Number(id));
-    if (!dailyLog) return <NotFound />;
-
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.formContainer}>
-          <Text style={styles.formEyebrow}>{saved === '1' ? 'SAVED SUCCESSFULLY' : 'DAILY LOG'}</Text>
-          <Text style={styles.formTitle}>{formatDate(fromDateKey(dailyLog.date))}</Text>
-          <Text style={styles.formDescription}>Your one-day Wluey monitor record.</Text>
-
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Menstruation</Text>
-            <Text style={styles.detailValue}>{flowLabels[dailyLog.flow]}</Text>
-
-            {dailyLog.symptoms.length ? (
-              <>
-                <Text style={styles.detailLabel}>Symptoms</Text>
-                <Text style={styles.detailValue}>{dailyLog.symptoms.join(', ')}</Text>
-              </>
-            ) : null}
-
-            {dailyLog.moods.length ? (
-              <>
-                <Text style={styles.detailLabel}>Mood</Text>
-                <Text style={styles.detailValue}>{dailyLog.moods.join(', ')}</Text>
-              </>
-            ) : null}
-
-            {dailyLog.notes ? (
-              <>
-                <Text style={styles.detailLabel}>Notes</Text>
-                <Text style={styles.detailValue}>{dailyLog.notes}</Text>
-              </>
-            ) : null}
-          </View>
-
-          <Pressable onPress={() => router.back()} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>Back to history</Text>
-          </Pressable>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  const period = findPeriod(Number(id));
-  if (!period) return <NotFound />;
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.detailContainer}>
-        <Text style={styles.formEyebrow}>PERIOD DETAIL</Text>
-        <Text style={styles.formTitle}>{period.month}</Text>
-        <Text style={styles.formDescription}>Here is the record saved in your cycle history.</Text>
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Dates</Text>
-          <Text style={styles.detailValue}>{period.startDate} — {period.endDate}</Text>
-          <Text style={styles.detailLabel}>Duration</Text>
-          <Text style={styles.detailValue}>{period.duration} days</Text>
-        </View>
-        <Pressable onPress={() => router.back()} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>Back to history</Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
-  );
+  const { findPeriod, findDailyLog, deletePeriod, deleteDailyLog, isReady } = usePeriods();
+  if (!isReady) return <LoadingScreen />;
+  const log = type === 'daily' ? findDailyLog(id) : undefined;
+  const period = type === 'daily' ? undefined : findPeriod(id);
+  const exists = Boolean(log || period);
+  const remove = () => Alert.alert('Delete this entry?', 'You can’t undo this action.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: async () => { try { if (log) await deleteDailyLog(log.id); if (period) await deletePeriod(period.id); router.replace('/history' as never); } catch { Alert.alert('Could not delete entry', 'Please try again when device storage is available.'); } } },
+  ]);
+  if (!exists) return <AppFrame><AppHeader /><Text style={styles.heading}>Entry not found</Text><Text style={styles.body}>It may have been removed from your history.</Text><Pressable onPress={() => router.replace('/history' as never)} style={[styles.primaryButton, { marginTop: 22 }]}><Text style={styles.primaryButtonText}>Back to history</Text></Pressable></AppFrame>;
+  const title = log ? formatDate(fromDateKey(log.date)) : `${formatDate(fromDateKey(period!.startDate))}${period!.startDate === period!.endDate ? '' : ` – ${formatDate(fromDateKey(period!.endDate))}`}`;
+  return <AppFrame>
+    <AppHeader />
+    <Text style={styles.greeting}>{log ? 'DAILY CHECK-IN' : 'PERIOD RECORD'}</Text>
+    <Text style={styles.heading}>{title}</Text>
+    {saved ? <View accessibilityLiveRegion="polite" style={[styles.notice, { backgroundColor: '#E8F0E5' }]}><Text style={[styles.noticeText, { color: '#49634A' }]}>{saved === 'updated' ? 'Changes saved to your history.' : 'Entry saved to your history.'}</Text></View> : null}
+    <View style={[styles.card, { marginTop: 22 }]}>
+      {period ? <>
+        <Text style={styles.detailLabel}>Dates</Text><Text style={styles.detailValue}>{formatDate(fromDateKey(period.startDate))} – {formatDate(fromDateKey(period.endDate))}</Text>
+        <Text style={styles.detailLabel}>Duration</Text><Text style={styles.detailValue}>{calculateDuration(fromDateKey(period.startDate), fromDateKey(period.endDate))} days</Text>
+        <Text style={styles.detailLabel}>Overall flow</Text><Text style={styles.detailValue}>{period.flow}</Text>
+      </> : null}
+      {log ? <>
+        <Text style={styles.detailLabel}>Flow</Text><Text style={styles.detailValue}>{log.flow === 'none' ? 'No flow recorded' : `${log.flow[0].toUpperCase()}${log.flow.slice(1)} flow`}</Text>
+        <Text style={styles.detailLabel}>Symptoms</Text><Text style={styles.detailValue}>{log.symptoms.join(', ') || 'None recorded'}</Text>
+        <Text style={styles.detailLabel}>Mood</Text><Text style={styles.detailValue}>{log.moods.join(', ') || 'None recorded'}</Text>
+        {log.notes ? <><Text style={styles.detailLabel}>Note</Text><Text style={styles.detailValue}>{log.notes}</Text></> : null}
+      </> : null}
+    </View>
+    <View style={styles.buttonRow}><View style={{ flex: 1 }}><Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/add-period', params: { mode: log ? 'log' : 'period', ...(log ? { type: 'daily' } : {}), id: log?.id ?? period?.id } } as never)} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Edit entry</Text></Pressable></View><View style={{ flex: 1 }}><Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Back</Text></Pressable></View></View>
+    <Pressable accessibilityRole="button" onPress={remove} style={[styles.textButton, { marginTop: 12 }]}><Text style={[styles.textButtonText, { color: palette.danger, textAlign: 'center' }]}>Delete entry</Text></Pressable>
+  </AppFrame>;
 }

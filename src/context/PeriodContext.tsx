@@ -1,75 +1,136 @@
-import { createContext, PropsWithChildren, useContext, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type FlowLevel = 'none' | 'spotting' | 'light' | 'medium' | 'heavy';
 
-export type PeriodRecord = {
-  id: number;
-  month: string;
+export interface PeriodRecord {
+  id: string;
   startDate: string;
   endDate: string;
-  duration: number;
-  startDateKey?: string;
-};
+  flow: Exclude<FlowLevel, 'none'>;
+  createdAt: string;
+}
 
-export type DailyLog = {
-  id: number;
+export interface DailyLog {
+  id: string;
   date: string;
   flow: FlowLevel;
   symptoms: string[];
   moods: string[];
   notes: string;
-};
+  createdAt: string;
+}
 
-export const initialPeriodHistory: PeriodRecord[] = [
-  { id: 1, month: 'July 2026', startDate: '7 Jul', endDate: '12 Jul', duration: 6, startDateKey: '2026-07-07' },
-  { id: 2, month: 'August 2026', startDate: '4 Aug', endDate: '9 Aug', duration: 6, startDateKey: '2026-08-04' },
-  { id: 3, month: 'September 2026', startDate: '1 Sep', endDate: '6 Sep', duration: 6, startDateKey: '2026-09-01' },
-];
+interface StoredCycleData {
+  version: 1;
+  periods: PeriodRecord[];
+  dailyLogs: DailyLog[];
+}
 
 type PeriodContextValue = {
   periods: PeriodRecord[];
   dailyLogs: DailyLog[];
-  addPeriod: (period: Omit<PeriodRecord, 'id'>) => PeriodRecord;
-  addDailyLog: (log: Omit<DailyLog, 'id'>) => DailyLog;
-  findPeriod: (id: number) => PeriodRecord | undefined;
-  findDailyLog: (id: number) => DailyLog | undefined;
+  isReady: boolean;
+  storageError: string | null;
+  addPeriod: (period: Omit<PeriodRecord, 'id' | 'createdAt'>) => Promise<PeriodRecord>;
+  updatePeriod: (period: PeriodRecord) => Promise<void>;
+  deletePeriod: (id: string) => Promise<void>;
+  addDailyLog: (log: Omit<DailyLog, 'id' | 'createdAt'>) => Promise<DailyLog>;
+  updateDailyLog: (log: DailyLog) => Promise<void>;
+  deleteDailyLog: (id: string) => Promise<void>;
+  findPeriod: (id: string) => PeriodRecord | undefined;
+  findDailyLog: (id: string) => DailyLog | undefined;
 };
 
+const STORAGE_KEY = 'wlueoy.cycle-data.v1';
 const PeriodContext = createContext<PeriodContextValue | undefined>(undefined);
+const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 export function PeriodProvider({ children }: PropsWithChildren) {
-  const [periods, setPeriods] = useState<PeriodRecord[]>(initialPeriodHistory);
+  const [periods, setPeriods] = useState<PeriodRecord[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
+  const [isReady, setIsReady] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const dataRef = useRef<StoredCycleData>({ version: 1, periods: [], dailyLogs: [] });
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
 
-  const value = useMemo<PeriodContextValue>(() => {
-    const addPeriod = (period: Omit<PeriodRecord, 'id'>) => {
-      const nextPeriod: PeriodRecord = { ...period, id: Date.now() };
-      setPeriods((currentPeriods) => [...currentPeriods, nextPeriod]);
-      return nextPeriod;
-    };
-
-    const addDailyLog = (log: Omit<DailyLog, 'id'>) => {
-      const nextLog: DailyLog = { ...log, id: Date.now() };
-      setDailyLogs((currentLogs) => {
-        const withoutSameDate = currentLogs.filter((currentLog) => currentLog.date !== nextLog.date);
-        return [...withoutSameDate, nextLog];
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(STORAGE_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || parsed.version !== 1
+          || !('periods' in parsed) || !Array.isArray(parsed.periods)
+          || !('dailyLogs' in parsed) || !Array.isArray(parsed.dailyLogs)) {
+          throw new Error('Saved cycle data could not be read.');
+        }
+        if (alive) {
+          const restored = parsed as StoredCycleData;
+          dataRef.current = restored;
+          setPeriods(restored.periods);
+          setDailyLogs(restored.dailyLogs);
+        }
+      })
+      .catch(() => {
+        if (alive) setStorageError('Saved data could not be loaded. You can continue, but check your device storage.');
+      })
+      .finally(() => {
+        if (alive) setIsReady(true);
       });
-      return nextLog;
-    };
+    return () => { alive = false; };
+  }, []);
 
-    const findPeriod = (id: number) => periods.find((period) => period.id === id);
-    const findDailyLog = (id: number) => dailyLogs.find((log) => log.id === id);
+  const commit = useCallback((next: StoredCycleData) => {
+    dataRef.current = next;
+    setPeriods(next.periods);
+    setDailyLogs(next.dailyLogs);
+    setStorageError(null);
+    const write = writeQueue.current
+      .catch(() => undefined)
+      .then(() => AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)));
+    writeQueue.current = write.catch(() => setStorageError('This change could not be saved to device storage.'));
+    return write;
+  }, []);
 
-    return { periods, dailyLogs, addPeriod, addDailyLog, findPeriod, findDailyLog };
-  }, [periods, dailyLogs]);
+  const addPeriod = useCallback(async (input: Omit<PeriodRecord, 'id' | 'createdAt'>) => {
+    const period = { ...input, id: makeId(), createdAt: new Date().toISOString() };
+    await commit({ ...dataRef.current, periods: [...dataRef.current.periods, period] });
+    return period;
+  }, [commit]);
+  const updatePeriod = useCallback((period: PeriodRecord) => {
+    return commit({ ...dataRef.current, periods: dataRef.current.periods.map((item) => item.id === period.id ? period : item) });
+  }, [commit]);
+  const deletePeriod = useCallback((id: string) => {
+    return commit({ ...dataRef.current, periods: dataRef.current.periods.filter((item) => item.id !== id) });
+  }, [commit]);
+  const addDailyLog = useCallback(async (input: Omit<DailyLog, 'id' | 'createdAt'>) => {
+    const existing = dataRef.current.dailyLogs.find((log) => log.date === input.date);
+    const log: DailyLog = existing
+      ? { ...input, id: existing.id, createdAt: existing.createdAt }
+      : { ...input, id: makeId(), createdAt: new Date().toISOString() };
+    await commit({ ...dataRef.current, dailyLogs: [...dataRef.current.dailyLogs.filter((item) => item.date !== input.date), log] });
+    return log;
+  }, [commit]);
+  const updateDailyLog = useCallback((log: DailyLog) => {
+    return commit({ ...dataRef.current, dailyLogs: [...dataRef.current.dailyLogs.filter((item) => item.id !== log.id && item.date !== log.date), log] });
+  }, [commit]);
+  const deleteDailyLog = useCallback((id: string) => {
+    return commit({ ...dataRef.current, dailyLogs: dataRef.current.dailyLogs.filter((item) => item.id !== id) });
+  }, [commit]);
+
+  const value = useMemo<PeriodContextValue>(() => ({
+    periods, dailyLogs, isReady, storageError,
+    addPeriod, updatePeriod, deletePeriod, addDailyLog, updateDailyLog, deleteDailyLog,
+    findPeriod: (id) => periods.find((period) => period.id === id),
+    findDailyLog: (id) => dailyLogs.find((log) => log.id === id),
+  }), [periods, dailyLogs, isReady, storageError, addPeriod, updatePeriod, deletePeriod, addDailyLog, updateDailyLog, deleteDailyLog]);
 
   return <PeriodContext.Provider value={value}>{children}</PeriodContext.Provider>;
 }
 
 export function usePeriods() {
   const context = useContext(PeriodContext);
-  if (!context) {
-    throw new Error('usePeriods must be used inside PeriodProvider');
-  }
+  if (!context) throw new Error('usePeriods must be used inside PeriodProvider');
   return context;
 }
